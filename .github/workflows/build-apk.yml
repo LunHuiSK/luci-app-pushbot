@@ -49,7 +49,14 @@ jobs:
             tar -xf $SDK_FILE
           fi
           
-          mv openwrt-sdk-* sdk
+          # 安全精准地重命名 SDK 文件夹
+          SDK_DIR=$(find . -maxdepth 1 -type d -name "openwrt-sdk-*" | head -n 1)
+          if [ -n "$SDK_DIR" ]; then
+            mv "$SDK_DIR" sdk
+          else
+            echo "错误：未找到解压后的 SDK 文件夹！"
+            exit 1
+          fi
 
       - name: 4. 配置插件并编译
         run: |
