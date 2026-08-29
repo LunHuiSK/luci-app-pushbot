@@ -84,10 +84,6 @@
 - [luci-app-wrtbwmon](https://github.com/brvphoenix/luci-app-wrtbwmon) 
 
 #### ps
-- 新功能看情况开发
-- 王者荣耀新赛季，不思进取中
-- 欢迎各种代码提交
 - 提交bug时请尽量带上设备信息，日志与描述（如执行`/usr/bin/serverchan/serverchan`后的提示、日志信息、/tmp/serverchan/ipAddress 文件信息）
 - 三言两句恕我无能为力
-- 武汉加油
 
