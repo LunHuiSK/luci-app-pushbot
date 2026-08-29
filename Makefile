@@ -8,7 +8,7 @@ PKG_MAINTAINER:=tty228 <tty228@yeah.net>  zzsj0928 MasterOfStar
 
 LUCI_TITLE:=LuCI support for Pushbot
 LUCI_PKGARCH:=all
-LUCI_DEPENDS:=+iputils-arping +curl +jq
+LUCI_DEPENDS:=+arping +curl +jq
 
 define Package/$(PKG_NAME)/conffiles
 /etc/config/pushbot
