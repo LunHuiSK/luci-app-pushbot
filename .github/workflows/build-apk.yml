@@ -55,22 +55,18 @@ jobs:
         run: |
           cd sdk
           
-          # 更新并安装默认 feeds
+          # 1. 将 PushBot 源码放入 SDK 的 package 目录
+          mkdir -p package/luci-app-pushbot
+          cp -r ../* package/luci-app-pushbot/ 2>/dev/null || true
+          
+          # 2. 更新并安装所有官方 Feeds 依赖
           ./scripts/feeds update -a
           ./scripts/feeds install -a
+          ./scripts/feeds install -a -p luci
           
-          # 复制当前仓库源码到 SDK 目录
-          mkdir -p package/luci-app-pushbot
-          cp -rn ../* package/luci-app-pushbot/ || true
-          
-          # 重新更新自建 package 索引
-          ./scripts/feeds install -p custom -a || true
-          
-          # 生成默认配置
+          # 3. 开启选择并编译
           make defconfig
-          
-          # 开启详细日志编译（便于排查具体报错）
-          make package/luci-app-pushbot/compile V=s
+          make package/luci-app-pushbot/compile V=s -j1
 
       - name: 5. 上传 APK 产物
         if: success()
