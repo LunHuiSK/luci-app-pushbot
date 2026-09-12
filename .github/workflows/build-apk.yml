@@ -1,5 +1,8 @@
 name: Build PushBot APK for OpenWrt 25.12
 
+env:
+  ACTIONS_NODE20_DEPRECATION_WARNING: false # 屏蔽 Node.js 20 废弃警告日志
+  
 on:
   workflow_dispatch:
     inputs:
