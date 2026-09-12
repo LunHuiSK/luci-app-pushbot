@@ -19,9 +19,16 @@ function read_config(){
 	"up_timeout" "down_timeout" "timeout_retry_count" "thread_num" "soc_code" "pve_host" "pve_port"\
 	"err_enable" "err_sheep_enable" "err_device_aliases" "network_err_event" "system_time_event" "autoreboot_time" "network_restart_time" "public_ip_event" "public_ip_retry_count" \
 	"jsonpath" "dd_webhook" "we_webhook" "pp_token" "pp_channel" "pp_webhook" "pp_topic_enable" "pp_topic" "fs_webhook" "pushdeer_key" "pushdeer_srv_enable" "pushdeer_srv" "gotify_token" "gotify_priority" "gotify_srv" "ntfy_topic" "ntfy_srv" "ntfy_priority" "bark_srv_enable" "bark_srv" "bark_token" "bark_sound" "bark_icon" "bark_icon_enable" "bark_level"
-	
-	for str_version in "wrtbwmon" "iputils-arping" "curl" "iw"; do
-		eval `echo ${str_version:0:2}"_version"`=`opkg list-installed|grep -w ^${str_version}|awk '{print $3}'` 2>/dev/null
+
+	# OpenWrt 25.10 起使用 apk 包管理器，旧版本使用 opkg
+	# 流量统计后端由 wrtbwmon 更换为 nlbwmon
+	for str_version in "nlbwmon" "iputils-arping" "curl" "iw"; do
+		if command -v apk >/dev/null 2>&1; then
+			str_ver_tmp=$(apk list --installed 2>/dev/null | awk -v p="${str_version}" '$1 ~ "^"p"-[0-9]" {print $1; exit}')
+		else
+			str_ver_tmp=$(opkg list-installed 2>/dev/null | grep -w ^${str_version} | awk '{print $3}')
+		fi
+		eval `echo ${str_version:0:2}"_version"`='${str_ver_tmp}'
 	done
 	dir="/tmp/pushbot/" && mkdir -p ${dir}
 	tempjsonpath="/tmp/pushbot/temp.json"
@@ -46,8 +53,10 @@ function read_config(){
 	[ -z "$timeout_retry_count" ] && timeout_retry_count="2";[ "$timeout_retry_count" -eq "0" ] && timeout_retry_count="1"
 	[ ! -z "$bark_token" ] && [ -z "$bark_srv" ] && bark_srv="https://api.day.app"
 	[ ! -z "$pushdeer_key" ] && [ -z "$pushdeer_srv" ] && pushdeer_srv="https://api2.pushdeer.com"
+	# nlbwmon 数据库目录（可通过 uci 配置，默认 /var/lib/nlbwmon）
+	nlbwmon_db_dir=`uci get nlbwmon.@nlbwmon[0].database_directory 2>/dev/null`
+	[ -z "$nlbwmon_db_dir" ] && nlbwmon_db_dir="/var/lib/nlbwmon"
 
-	
 # 字符串读取
 	str_title_start=`/usr/bin/jq -r '.str_title_start' ${jsonpath}`
 	str_title_end=`/usr/bin/jq -r '.str_title_end' ${jsonpath}`
@@ -67,8 +76,8 @@ function read_config(){
 	table_tab=`/usr/bin/jq -r '.tabletab' ${jsonpath}`
 	( echo "$lite_enable"|grep -q "content" ) && str_title_start="" && str_title_end="" && str_splitline="" && str_linefeed="" && str_tab=""
 }
-	
-	
+
+
 
 # 初始化
 function pushbot_init(){
@@ -82,9 +91,9 @@ function pushbot_init(){
 	deltemp
 	get_syslog
 	add_ip_black
-	
+
 	rm -f ${dir}fd1 ${dir}sheep_usage ${dir}old_sheep_usage ${dir}client_usage_aliases ${dir}old_client_usage_aliases /usr/bin/pushbot/errlog >/dev/null 2>&1
-	[ ! -f "/usr/sbin/wrtbwmon" ] && echo "`date "+%Y-%m-%d %H:%M:%S"` 【！！！】未安装 wrtbwmon ，流量统计不可用" >> ${logfile}
+	command -v nlbwmon >/dev/null 2>&1 || echo "`date "+%Y-%m-%d %H:%M:%S"` 【！！！】未安装 nlbwmon ，流量统计不可用" >> ${logfile}
 	[ -z "$ip_version" ] && echo "`date "+%Y-%m-%d %H:%M:%S"` 【！！！】无法获取依赖项 iputils-arping 版本号，请确认插件是否正常运行" >> ${logfile}
 	[ -z "$cu_version" ] && echo "`date "+%Y-%m-%d %H:%M:%S"` 【！！！】无法获取依赖项 curl 版本号，请确认插件是否正常运行" >> ${logfile}
 	[ -z "${dd_webhook}${pp_token}${we_webhook}${fs_webhook}${bark_token}${pushdeer_key}${gotify_token}${gotify_srv}${ntfy_srv}${ntfy_topic}" ] && echo "`date "+%Y-%m-%d %H:%M:%S"` 【！！！】请填写正确的Token/Webhook " >> ${logfile} && return 1
@@ -104,7 +113,7 @@ function diy_send(){
 	[ -f ${tempjsonpath} ] && local logrow=$(grep -c "" ${tempjsonpath}) || local logrow="0"
 	[ $logrow -eq "0" ] && echo "`date "+%Y-%m-%d %H:%M:%S"` 【！！！】json 文件生成失败，请检查文件格式" >> ${logfile} && return 1
 	/usr/bin/jq -r '.[]' ${tempjsonpath}|grep "null" && echo "`date "+%Y-%m-%d %H:%M:%S"` 【！！！】参数变量生成失败，请检查设置项 `/usr/bin/jq -r '.' ${tempjsonpath}|grep "null"`" >> ${logfile}
-	
+
 	curl -X POST -H "$content_type" -d "${data}" "${diyurl}"
 }
 
@@ -119,7 +128,7 @@ function down_oui(){
 			cat ${dir}oui.txt|grep "base 16"|grep -i "apple\|aruba\|asus\|autelan\|belkin\|bhu\|buffalo\|cctf\|cisco\|comba\|datang\|dell\|dlink\|dowell\|ericsson\|fast\|feixun\|\
 fiberhome\|fujitsu\|grentech\|h3c\|hisense\|hiwifi\|honghai\|honghao\|hp\|htc\|huawei\|intel\|jinli\|jse\|lenovo\|lg\|liteon\|malata\|meizu\|mercury\|meru\|moto\|netcore\|\
 netgear\|nokia\|omron\|oneplus\|oppo\|philips\|router_unkown\|samsung\|shanzhai\|sony\|start_net\|sunyuanda\|tcl\|tenda\|texas\|tianyu\|tp-link\|ubq\|undefine\|VMware\|\
-utstarcom\|volans\|xerox\|xiaomi\|zdc\|zhongxing\|smartisan" > ${oui_base} && echo "`date "+%Y-%m-%d %H:%M:%S"` 【初始化】设备MAC厂商信息下载成功" >> ${logfile} || echo "`date "+%Y-%m-%d %H:%M:%S"` 【！！！】设备MAC厂商信息下载失败" >> ${logfile} 
+utstarcom\|volans\|xerox\|xiaomi\|zdc\|zhongxing\|smartisan" > ${oui_base} && echo "`date "+%Y-%m-%d %H:%M:%S"` 【初始化】设备MAC厂商信息下载成功" >> ${logfile} || echo "`date "+%Y-%m-%d %H:%M:%S"` 【！！！】设备MAC厂商信息下载失败" >> ${logfile}
 		fi
 		if [ -f ${dir}oui.txt ] && [ "$oui_data" -eq "2" ]; then
 			cat ${dir}oui.txt|grep "base 16" > ${oui_base} && echo "`date "+%Y-%m-%d %H:%M:%S"` 【初始化】设备MAC厂商信息下载成功" >> ${logfile} || echo "`date "+%Y-%m-%d %H:%M:%S"` 【！！！】设备MAC厂商信息下载失败" >> ${logfile}
@@ -271,24 +280,52 @@ function soc_temp(){
 	[ ! -z "$soc_code" ] && eval `echo "$soc_code"` 2>/dev/null
 }
 
-# 流量数据
+# 通过 nlbwmon 获取指定 MAC 的总流量（下行+上行，单位：字节）
+function _nlbw_get_mac_bytes(){
+	local mac_norm=$(echo "$1"|tr 'A-F' 'a-f'|tr -d ':')
+	[ -z "$mac_norm" ] && echo "0" && return
+	local total=""
+
+	# 优先使用 JSON 输出
+	total=$(nlbw -c json 2>/dev/null | /usr/bin/jq -r --arg m "$mac_norm" '
+		[ .[] | select(
+			( (.src_mac // .src.mac? // .mac? // "") | ascii_downcase | gsub(":";"") ) == $m or
+			( (.dst_mac // .dst.mac? // .mac? // "") | ascii_downcase | gsub(":";"") ) == $m
+		) | ( (.rx_bytes // 0) + (.tx_bytes // 0) ) ] | add // empty
+	' 2>/dev/null)
+
+	# JSON 不可用则回退 CSV 输出
+	if [ -z "$total" ] || [ "$total" = "null" ]; then
+		total=$(nlbw -c csv 2>/dev/null | awk -F, -v m="$mac_norm" '
+			BEGIN{IGNORECASE=1}
+			NR==1 && $1 ~ /family/ {next}
+			{
+				s4=$4; s6=$6; gsub(/:/,"",s4); gsub(/:/,"",s6);
+				if (tolower(s4)==tolower(m) || tolower(s6)==tolower(m))
+					s += $7 + $9
+			}
+			END{ print s+0 }
+		')
+	fi
+
+	[ -z "$total" ] && total=0
+	echo "$total"
+}
+
+# 流量数据（nlbwmon 后端）
 function usage(){
-	[ ! -f "/usr/sbin/wrtbwmon" ] || [ ! "$1" ] && return
-	if [ $1 == "update" ] ;then
-		function version_le() { test "$(echo "$@"|tr " " "\n"|sort -n|head -n 1)" == "$1"; }
-		function version_ge() { test "$(echo "$@"|tr " " "\n"|sort -r|head -n 1)" == "$1"; }
-		[ ! -z "$wr_version" ] && ( version_ge "${wr_version}" "1.2.0" ) && wrtbwmon -f ${dir}usage.db 2>/dev/null && return
-		[ ! -z "$wr_version" ] && ( version_le "${wr_version}" "1.0.0" ) || [ -z "$wr_version" ] && wrtbwmon update ${dir}usage.db 2>/dev/null && return
-	elif [ $1 == "get" ] ;then
-		[ ! -f "${dir}usage.db" ] && [ ! "$3" ] && echo `bytes_for_humans 0` && return
-		[ ! -f "${dir}usage.db" ] && [ "$3" ] && echo 0 && return
-		[ -z "$total_n" ] && total_n=`cat ${dir}usage.db|head -n1|grep "total"|sed 's/,/\n/g'|awk '/total/{print NR}'` 2>/dev/null
-		[ -z "$total_n" ] && total_n="6"
-		[ "$2" ] && local tmptotal=`cat ${dir}usage.db|sed 's/,,,/,0,0,/g'|sed 's/,,/,0,/g'|sed 's/,/ /g'|grep -i -w ${2}|awk "{print "'$'$total_n"}"|grep -v "^$"|sort -u|head -n1` 2>/dev/null
+	command -v nlbwmon >/dev/null 2>&1 || [ -z "$1" ] && return
+	if [ "$1" == "update" ] ;then
+		# nlbwmon 由守护进程自动维护数据库，无需手动更新
+		return
+	elif [ "$1" == "get" ] ;then
+		[ -z "$2" ] && echo "0" && return
+		local tmptotal=`_nlbw_get_mac_bytes "$2"`
 		[ -z "$tmptotal" ] && local tmptotal="0"
 		[ ! "$3" ] && echo `bytes_for_humans ${tmptotal}` || echo "$tmptotal"
-	elif [ $1 == "down" ] ;then
-		[ "$2" ] && sed -i "/,${2},/d" ${dir}usage.db 2>/dev/null
+	elif [ "$1" == "down" ] ;then
+		# nlbwmon 不提供按 MAC 删除记录的操作，保持数据完整性
+		return
 	fi
 }
 
@@ -441,10 +478,9 @@ function pushbot_cron(){
 		return
 	fi
 
-	# 重置流量
+	# 重置流量（nlbwmon 数据库目录可通过 uci 配置，默认 /var/lib/nlbwmon）
 	if [ ! -z "$reset_regularly" ] && [ "$reset_regularly" -eq "1" ]; then
-		crontab -l 2>/dev/null > conf && echo -e "0 0 * * * rm /tmp/pushbot/usage.db >/dev/null 2>&1" >> conf && crontab conf && rm -f conf >/dev/null 2>&1
-		crontab -l 2>/dev/null > conf && echo -e "0 0 * * * rm /tmp/pushbot/usage6.db >/dev/null 2>&1" >> conf && crontab conf && rm -f conf >/dev/null 2>&1
+		crontab -l 2>/dev/null > conf && echo -e "0 0 * * * /etc/init.d/nlbwmon stop; rm -f ${nlbwmon_db_dir}/*.db ${nlbwmon_db_dir}/*.db.gz 2>/dev/null; /etc/init.d/nlbwmon start" >> conf && crontab conf && rm -f conf >/dev/null 2>&1
 	fi
 	[ ! -z "$regular_time_2" ] && local regular_time_2=",${regular_time_2}"
 	[ ! -z "$regular_time_3" ] && local regular_time_3=",${regular_time_3}"
@@ -735,7 +771,7 @@ function ip_changes(){
 		echo "`date "+%Y-%m-%d %H:%M:%S"` ${disturb_text}路由器已经重启!" >> ${logfile}
 		[ ! -z "$pushbot_ipv4" ] && [ "$pushbot_ipv4" -ne "0" ] && echo "`date "+%Y-%m-%d %H:%M:%S"`  当前IP: ${IPv4}" >> ${logfile}
 		[ ! -z "$pushbot_ipv6" ] && [ "$pushbot_ipv6" -ne "0" ] && echo "`date "+%Y-%m-%d %H:%M:%S"`  当前IPv6: ${IPv6}" >> ${logfile}
-		echo IPv4 $IPv4 > ${dir}ip && echo -e IPv6 $IPv6 >> ${dir}ip	
+		echo IPv4 $IPv4 > ${dir}ip && echo -e IPv6 $IPv6 >> ${dir}ip
 		title="路由器重新启动"
 		content="${content}${str_splitline}${str_title_start}${font_green} 路由器重新启动${font_end}${str_title_end}"
 		[ ! -z "$pushbot_ipv4" ] && [ "$pushbot_ipv4" -ne "0" ] && content="${content}${str_linefeed}${str_tab}当前IP：${IPv4}"
@@ -984,7 +1020,7 @@ function login_send(){
 	cat ${dir}login_monitor|grep -i "Bad password attempt\|Login attempt for nonexistent user from"|grep -Eo "[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}" >> ${dir}ssh_failed
 	echo "" > ${dir}login_monitor
 	add_ip_black
-	
+
 	local login_ip_list=`cat ${dir}web_login|awk '{print $2}'|grep -v "^$"|sort -u|head -n1`
 	for login_ip in $login_ip_list; do
 		[ -z "$login_ip" ] && continue
@@ -1090,13 +1126,13 @@ function add_ip_black(){
 	[ ! -f "${ip_blacklist_path}" ] && local logrow="0"
 	[ ! -z "$web_login_black" ] && [ "$web_login_black" -eq "0" ] || [ -z "$web_login_black" ] && local logrow="0"
 	ipset flush ip_blacklist >/dev/null 2>&1
-	
+
 	if [ $logrow -le "0" ]; then
 		iptables -D INPUT -m set --match-set ip_blacklist src -j DROP >/dev/null 2>&1
 		ipset destroy ip_blacklist >/dev/null 2>&1
 		return
 	fi
-	
+
 	ipset list ip_blacklist >/dev/null 2>&1 || ipset create ip_blacklist hash:ip timeout ${ip_black_timeout} >/dev/null 2>&1
 	iptables -C INPUT -m set --match-set ip_blacklist src -j DROP >/dev/null 2>&1 || iptables -I INPUT -m set --match-set ip_blacklist src -j DROP >/dev/null 2>&1
 	echo "$1" >> ${ip_blacklist_path}
@@ -1267,7 +1303,7 @@ while [ "$pushbot_enable" -eq "1" ]; do
 		[ "$disturb" -eq "0" ] && diy_send "${title}" "${content}" "${jsonpath}" >/dev/null 2>&1
 		[ $? -eq 1 ] && echo "`date "+%Y-%m-%d %H:%M:%S"` 【！！！】推送失败，请检查网络或设置信息 " >> ${logfile}
 	fi
-	
+
 	while [ -f "${dir}send_enable.lock" ]; do
 		sleep $sleeptime
 	done
