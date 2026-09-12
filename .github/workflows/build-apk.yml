@@ -33,25 +33,25 @@ jobs:
           TARGET="${{ github.event.inputs.target }}"
           SUBTARGET="${{ github.event.inputs.subtarget }}"
           BASE_URL="https://downloads.openwrt.org/snapshots/targets/${TARGET}/${SUBTARGET}"
-          
+
           echo "正在查找架构 ${TARGET}/${SUBTARGET} 的 SDK..."
           SDK_FILE=$(curl -s $BASE_URL/ | grep -oE 'openwrt-sdk-[^"]*\.tar\.(zst|xz)' | head -n 1)
-          
+
           if [ -z "$SDK_FILE" ]; then
             echo "错误: 未找到对应的 SDK 文件，请检查 Target/Subtarget 参数是否正确！"
             exit 1
           fi
-          
+
           echo "下载 SDK: $SDK_FILE"
           wget -q "$BASE_URL/$SDK_FILE"
-          
+
           echo "解压 SDK..."
           if [[ "$SDK_FILE" == *.zst ]]; then
             tar -I zstd -xf $SDK_FILE
           else
             tar -xf $SDK_FILE
           fi
-          
+
           # 安全精准地重命名 SDK 文件夹
           SDK_DIR=$(find . -maxdepth 1 -type d -name "openwrt-sdk-*" | head -n 1)
           if [ -n "$SDK_DIR" ]; then
@@ -64,39 +64,62 @@ jobs:
       - name: 4. 配置插件并编译
         run: |
           cd sdk
-          
+
           # 1. 将 PushBot 源码复制到 SDK 的 package 目录（排除已创建的 sdk 目录避免嵌套递归）
           mkdir -p package/luci-app-pushbot
           rsync -av --exclude='sdk' ../ package/luci-app-pushbot/
-          
-          # --------------------【关键修补与依赖替换区域】--------------------
-          echo "开始修补 PushBot 源码..."
-          # A. 替换 Makefile 中的依赖 (wrtbwmon -> nlbwmon, arping -> iputils-arping)
-          sed -i 's/wrtbwmon/nlbwmon/g' package/luci-app-pushbot/Makefile
-          sed -i 's/\+arping/\+iputils-arping/g' package/luci-app-pushbot/Makefile
-          
-          # B. 替换核心 Shell/Lua 脚本与 UI 界面中的 wrtbwmon 关键字
-          find package/luci-app-pushbot/ -type f -exec sed -i 's/wrtbwmon/nlbwmon/g' {} +
-          
-          # C. 将 PushBot 脚本中的 opkg 指令自动替换为 apk 指令
-          find package/luci-app-pushbot/ -type f -exec sed -i 's/opkg list-installed/apk list --installed/g' {} +
-          find package/luci-app-pushbot/ -type f -exec sed -i 's/opkg/apk/g' {} +
-          
-          # D. 防止 post-upgrade/postinst 启动服务时阻塞 apk 进程
-          find package/luci-app-pushbot/ -type f -exec sed -i 's/\/etc\/init.d\/pushbot start/\/etc\/init.d\/pushbot start >\/dev\/null 2>\&1 \&/g' {} +
+
+          # --------------------【精准兼容性修补区域】--------------------
+          echo "开始进行 OpenWrt 25.12 兼容性修补..."
+
+          # A. Makefile 依赖修补（幂等）：确保 nlbwmon / jq / wget-ssl / ipset / iptables 齐全
+          MAKEFILE=package/luci-app-pushbot/Makefile
+          if [ -f "$MAKEFILE" ]; then
+            # 兼容老版本关键字
+            sed -i 's/wrtbwmon/nlbwmon/g' "$MAKEFILE"
+            sed -i 's/+arping/+iputils-arping/g' "$MAKEFILE"
+            # 若尚未声明 jq，则补入完整依赖
+            if ! grep -q '+jq' "$MAKEFILE"; then
+              sed -i 's/+nlbwmon/+nlbwmon +jq +wget-ssl +ipset +iptables/' "$MAKEFILE"
+            fi
+          fi
+
+          # B. 只针对 pushbot 主脚本做关键字替换，且【保留 apk/opkg 双兼容逻辑】
+          #    找到脚本路径（不同分支目录结构可能不同）
+          PUSHBOT_SCRIPT=$(find package/luci-app-pushbot -type f -name pushbot ! -name "*.htm" | head -n 1)
+          if [ -n "$PUSHBOT_SCRIPT" ]; then
+            echo "修补主脚本: $PUSHBOT_SCRIPT"
+            chmod +x "$PUSHBOT_SCRIPT"
+            # 兼容旧关键字（如无则无副作用）
+            sed -i 's/wrtbwmon/nlbwmon/g' "$PUSHBOT_SCRIPT"
+            # 注：切勿再执行 sed 's/opkg/apk/g'，
+            #     脚本内已有 `command -v apk` 分支，无需、也不应整体替换
+          fi
+
+          # C. 防止 post-upgrade / postinst 启动服务时阻塞 apk 进程
+          for f in $(find package/luci-app-pushbot -type f \( -name "postinst*" -o -name "post-upgrade*" \)); do
+            sed -i 's#/etc/init.d/pushbot start$#/etc/init.d/pushbot start >/dev/null 2>\&1 \&#' "$f" || true
+          done
           # ------------------------------------------------------------------
-          
+
           # 2. 更新并安装所有官方 Feeds 依赖
           ./scripts/feeds update -a
           ./scripts/feeds install -a
           ./scripts/feeds install -a -p luci
-          ./scripts/feeds install nlbwmon iputils-arping curl jq
-          
+          ./scripts/feeds install nlbwmon iputils-arping curl jq wget-ssl ipset iptables
+
           # 3. 写入依赖配置，强制启用相关组件
-          echo "CONFIG_PACKAGE_nlbwmon=y" >> .config
-          echo "CONFIG_PACKAGE_iputils-arping=y" >> .config
-          echo "CONFIG_PACKAGE_luci-app-pushbot=m" >> .config
-          
+          cat >> .config <<EOF
+          CONFIG_PACKAGE_nlbwmon=y
+          CONFIG_PACKAGE_iputils-arping=y
+          CONFIG_PACKAGE_curl=y
+          CONFIG_PACKAGE_jq=y
+          CONFIG_PACKAGE_wget-ssl=y
+          CONFIG_PACKAGE_ipset=y
+          CONFIG_PACKAGE_iptables=y
+          CONFIG_PACKAGE_luci-app-pushbot=m
+          EOF
+
           # 4. 开启选择并编译
           make defconfig
           make package/luci-app-pushbot/compile V=s -j1
@@ -106,4 +129,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: luci-app-pushbot-apk-${{ github.event.inputs.target }}-${{ github.event.inputs.subtarget }}
-          path: sdk/bin/packages/*/base/luci-app-pushbot*.apk
+          # 兼容不同 feeds 目录层级（base / luci / packages 等），使用递归匹配
+          path: |
+            sdk/bin/packages/**/luci-app-pushbot*.apk
+            sdk/bin/packages/**/luci-app-pushbot*.ipk
+          if-no-files-found: warn
