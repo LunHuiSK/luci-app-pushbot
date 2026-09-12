@@ -74,10 +74,6 @@ jobs:
           
           # B. 替换核心 Shell/Lua 脚本与 UI 界面中的 wrtbwmon 关键字
           find package/luci-app-pushbot/ -type f -exec sed -i 's/wrtbwmon/nlbwmon/g' {} +
-
-          # C. 将 PushBot 脚本中的 opkg 指令自动替换为 apk 指令
-          find package/luci-app-pushbot/ -type f -exec sed -i 's/opkg list-installed/apk list --installed/g' {} +
-          find package/luci-app-pushbot/ -type f -exec sed -i 's/opkg/apk/g' {} +
           # -------------------------------------------------------------------------
           
           # 2. 更新并安装所有官方 Feeds 依赖
@@ -92,6 +88,9 @@ jobs:
           echo "CONFIG_PACKAGE_luci-app-pushbot=m" >> .config
           
           # 4. 开启选择并编译
+          # C. 将 PushBot 脚本中的 opkg 指令自动替换为 apk 指令
+          find package/luci-app-pushbot/ -type f -exec sed -i 's/opkg list-installed/apk list --installed/g' {} +
+          find package/luci-app-pushbot/ -type f -exec sed -i 's/opkg/apk/g' {} +
           make defconfig
           make package/luci-app-pushbot/compile V=s -j1
 
